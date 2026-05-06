@@ -18,6 +18,7 @@ func newChatsCmd(flags *rootFlags) *cobra.Command {
 	}
 	cmd.AddCommand(newChatsListCmd(flags))
 	cmd.AddCommand(newChatsShowCmd(flags))
+	cmd.AddCommand(newChatsSearchCmd(flags))
 	return cmd
 }
 
@@ -93,5 +94,56 @@ func newChatsShowCmd(flags *rootFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&jid, "jid", "", "chat JID")
+	return cmd
+}
+
+func newChatsSearchCmd(flags *rootFlags) *cobra.Command {
+	var limit int
+
+	cmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Search chats by name or JID pattern",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := withTimeout(context.Background(), flags)
+			defer cancel()
+
+			a, lk, err := newApp(ctx, flags, false, false)
+			if err != nil {
+				return err
+			}
+			defer closeApp(a, lk)
+
+			chats, err := a.DB().ListChats(args[0], limit)
+			if err != nil {
+				return err
+			}
+
+			if len(chats) == 0 {
+				if flags.asJSON {
+					return out.WriteJSON(os.Stdout, []any{})
+				}
+				fmt.Println("No chats found matching:", args[0])
+				return nil
+			}
+
+			if flags.asJSON {
+				return out.WriteJSON(os.Stdout, chats)
+			}
+
+			w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
+			fmt.Fprintf(w, "KIND\tNAME\tJID\tLAST\n")
+			for _, c := range chats {
+				name := c.Name
+				if name == "" {
+					name = c.JID
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", c.Kind, truncate(name, 28), c.JID, c.LastMessageTS.Local().Format("2006-01-02 15:04:05"))
+			}
+			_ = w.Flush()
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 50, "limit results")
 	return cmd
 }
